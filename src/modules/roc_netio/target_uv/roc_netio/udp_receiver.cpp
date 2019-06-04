@@ -42,51 +42,25 @@ void UDPReceiver::destroy() {
 }
 
 bool UDPReceiver::start(packet::Address& bind_address) {
-    if (int err = uv_udp_init(&loop_, &handle_)) {
-        roc_log(LogError, "udp receiver: uv_udp_init(): [%s] %s", uv_err_name(err),
-                uv_strerror(err));
+    if (!init_()) {
         return false;
     }
 
-    handle_.data = this;
-    handle_initialized_ = true;
-
-    unsigned flags = 0;
-    if (bind_address.port() > 0) {
-        flags |= UV_UDP_REUSEADDR;
-    }
-
-    if (int err = uv_udp_bind(&handle_, bind_address.saddr(), flags)) {
-        roc_log(LogError, "udp receiver: uv_udp_bind(): [%s] %s", uv_err_name(err),
-                uv_strerror(err));
+    if (!bind_(bind_address)) {
+        close_();
         return false;
     }
 
-    int addrlen = (int)bind_address.slen();
-    if (int err = uv_udp_getsockname(&handle_, bind_address.saddr(), &addrlen)) {
-        roc_log(LogError, "udp receiver: uv_udp_getsockname(): [%s] %s", uv_err_name(err),
-                uv_strerror(err));
+    if (!getsockname_(bind_address)) {
+        close_();
         return false;
     }
 
-    if (addrlen != (int)bind_address.slen()) {
-        roc_log(
-            LogError,
-            "udp receiver: uv_udp_getsockname(): unexpected len: got=%lu expected=%lu",
-            (unsigned long)addrlen, (unsigned long)bind_address.slen());
+    if (!start_(bind_address)) {
+        close_();
         return false;
     }
 
-    if (int err = uv_udp_recv_start(&handle_, alloc_cb_, recv_cb_)) {
-        roc_log(LogError, "udp receiver: uv_udp_recv_start(): [%s] %s", uv_err_name(err),
-                uv_strerror(err));
-        return false;
-    }
-
-    roc_log(LogInfo, "udp receiver: opened port %s",
-            packet::address_to_str(bind_address).c_str());
-
-    address_ = bind_address;
     return true;
 }
 
@@ -253,6 +227,82 @@ void UDPReceiver::recv_cb_(uv_udp_t* handle,
     pp->set_data(core::Slice<uint8_t>(*bp, 0, (size_t)nread));
 
     self.writer_.write(pp);
+}
+
+bool UDPReceiver::init_() {
+    if (int err = uv_udp_init(&loop_, &handle_)) {
+        roc_log(LogError, "udp receiver: uv_udp_init(): [%s] %s", uv_err_name(err),
+                uv_strerror(err));
+        return false;
+    }
+
+    handle_.data = this;
+    handle_initialized_ = true;
+
+    return true;
+}
+
+bool UDPReceiver::bind_(packet::Address& bind_address) {
+    unsigned flags = 0;
+    if (bind_address.port() > 0) {
+        flags |= UV_UDP_REUSEADDR;
+    }
+
+    if (int err = uv_udp_bind(&handle_, bind_address.saddr(), flags)) {
+        roc_log(LogError, "udp receiver: uv_udp_bind(): [%s] %s", uv_err_name(err),
+                uv_strerror(err));
+        return false;
+    }
+
+    return true;
+}
+
+bool UDPReceiver::getsockname_(packet::Address& bind_address) {
+    int addrlen = (int)bind_address.slen();
+    if (int err = uv_udp_getsockname(&handle_, bind_address.saddr(), &addrlen)) {
+        roc_log(LogError, "udp receiver: uv_udp_getsockname(): [%s] %s", uv_err_name(err),
+                uv_strerror(err));
+        return false;
+    }
+
+    if (addrlen != (int)bind_address.slen()) {
+        roc_log(
+            LogError,
+            "udp receiver: uv_udp_getsockname(): unexpected len: got=%lu expected=%lu",
+            (unsigned long)addrlen, (unsigned long)bind_address.slen());
+        return false;
+    }
+
+    return true;
+}
+
+bool UDPReceiver::start_(const packet::Address& bind_address) {
+    if (int err = uv_udp_recv_start(&handle_, alloc_cb_, recv_cb_)) {
+        roc_log(LogError, "udp receiver: uv_udp_recv_start(): [%s] %s", uv_err_name(err),
+                uv_strerror(err));
+        return false;
+    }
+
+    roc_log(LogInfo, "udp receiver: opened port %s",
+            packet::address_to_str(bind_address).c_str());
+
+    address_ = bind_address;
+    return true;
+}
+
+void UDPReceiver::close_() {
+    if (!handle_initialized_) {
+        return;
+    }
+
+    if (uv_is_closing((uv_handle_t*)&handle_)) {
+        return;
+    }
+
+    handle_.data = NULL;
+    handle_initialized_ = false;
+
+    uv_close((uv_handle_t*)&handle_, NULL);
 }
 
 } // namespace netio

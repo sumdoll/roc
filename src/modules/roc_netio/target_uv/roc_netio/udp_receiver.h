@@ -70,6 +70,12 @@ private:
 
     void destroy();
 
+    bool init_();
+    bool bind_(packet::Address&);
+    bool getsockname_(packet::Address&);
+    bool start_(const packet::Address&);
+    void close_();
+
     core::IAllocator& allocator_;
 
     uv_loop_t& loop_;
